@@ -1,8 +1,8 @@
 {
   "name": "geo-engine-node",
-  "version": "1.1.3",
+  "version": "2.0.0",
   "type": "module",
-  "description": "SDK oficial para Geo-Engine...",
+  "description": "Official Node.js and TypeScript SDK for the Geo-Engine platform.",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,18 +13,27 @@
       "require": "./dist/index.cjs"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "example": "node examples/simulation.js",
-    "release:patch": "npm version patch && npm publish --access public",
-    "release:minor": "npm version minor && npm publish --access public",
-    "build": "tsup index.js --format cjs,esm --dts --clean"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
+    "geoengine",
     "geofencing",
+    "spatial",
     "location",
     "tracking",
-    "sdk"
+    "postgis",
+    "telemetry",
+    "sdk",
+    "typescript"
   ],
   "author": "Geo-Engine Team",
   "license": "MIT",
@@ -32,7 +41,9 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.8"
   }
 }
