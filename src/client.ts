@@ -1,4 +1,5 @@
 import { ClientClosedError, ValidationError } from './errors.js';
+import { GeoIdentityService } from './geoidentity.js';
 import { HttpClient, type HttpClientConfig } from './http.js';
 import { AsyncIngester } from './ingester.js';
 import type {
@@ -9,6 +10,7 @@ import type {
   SpatialValidationResult,
 } from './models.js';
 import { SpatialService } from './spatial.js';
+import { UsersService } from './users.js';
 import {
   validateAndNormalizePolygon,
   validateDeviceId,
@@ -31,6 +33,26 @@ export class GeoEngine {
    * Alias for spatial (to maintain exact casing compatibility with Go client.Spatial).
    */
   readonly Spatial: SpatialService;
+
+  /**
+   * Users manages organization members, roles and invitations.
+   */
+  readonly users: UsersService;
+
+  /**
+   * Alias for users (matches Go client.Users).
+   */
+  readonly Users: UsersService;
+
+  /**
+   * GeoIdentity manages GeoIdentity access rules for users and the organization.
+   */
+  readonly geoIdentity: GeoIdentityService;
+
+  /**
+   * Alias for geoIdentity (matches Go client.GeoIdentity).
+   */
+  readonly GeoIdentity: GeoIdentityService;
 
   /**
    * Initializes a new GeoEngine client instance.
@@ -56,6 +78,11 @@ export class GeoEngine {
     this.http = new HttpClient(resolvedOptions);
     this.spatial = new SpatialService(this.http);
     this.Spatial = this.spatial;
+    const isClosed = () => this.isClosed;
+    this.users = new UsersService(this.http, isClosed);
+    this.Users = this.users;
+    this.geoIdentity = new GeoIdentityService(this.http, isClosed);
+    this.GeoIdentity = this.geoIdentity;
   }
 
   /**

@@ -1,17 +1,24 @@
 import { generateHMACSignature } from './crypto.js';
 import {
   APIError,
+  APIServiceError,
   AuthenticationError,
   ForbiddenError,
   GeofenceNotFoundError,
+  InvitationPendingError,
+  LastAdminError,
+  LastSubjectError,
   QuotaExceededError,
+  RuleNotFoundError,
   SpatialAPIError,
   SpatialErrorDetail,
   TimeoutError,
+  UserAlreadyExistsError,
+  UserNotFoundError,
 } from './errors.js';
 import type { GeoEngineOptions } from './models.js';
 
-export const USER_AGENT = 'GeoEngineNodeSDK/2.0.0';
+export const USER_AGENT = 'GeoEngineNodeSDK/2.1.0';
 
 export interface RequestOptions {
   method?: string;
@@ -19,6 +26,12 @@ export interface RequestOptions {
   body?: unknown;
   timeout?: number;
   isSpatial?: boolean;
+  /**
+   * Marks a Users / GeoIdentity call: the `{ success, data }` envelope is unwrapped,
+   * errors are parsed into APIServiceError subclasses, and only GET requests are
+   * retried automatically (writes such as invitations must not be sent twice).
+   */
+  isApiService?: boolean;
 }
 
 /**
@@ -104,6 +117,74 @@ export function parseHttpError(
   return new APIError(statusCode, message);
 }
 
+/**
+ * Parses an api-service error body (Users and GeoIdentity endpoints) into a typed error.
+ * Equivalent to Go's parseAPIServiceError + APIServiceError.sentinel.
+ */
+export function parseApiServiceError(statusCode: number, bodyText: string): APIError {
+  let parsed: {
+    error?: { message?: string; status?: string; details?: SpatialErrorDetail[] };
+  } | null = null;
+
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    // Non-JSON response body
+  }
+
+  const container = parsed && typeof parsed === 'object' ? parsed.error : undefined;
+  const details = Array.isArray(container?.details) ? container.details : [];
+  let code = '';
+  let message = '';
+
+  if (container && typeof container === 'object') {
+    code = container.status ?? '';
+    message = container.message ?? '';
+    const withReason = details.find(d => d?.reason);
+    if (withReason?.reason) {
+      code = withReason.reason;
+    }
+  } else {
+    message = bodyText.trim();
+  }
+
+  if (!message) {
+    message = `HTTP ${statusCode}`;
+  }
+
+  switch (code) {
+    case 'USER_NOT_FOUND':
+    case 'USER_REVOKED':
+      return new UserNotFoundError(message, statusCode, code, details);
+    case 'RULE_NOT_FOUND':
+      return new RuleNotFoundError(message, statusCode, code, details);
+    case 'USER_ALREADY_EXISTS':
+      return new UserAlreadyExistsError(message, statusCode, code, details);
+    case 'INVITATION_PENDING':
+      return new InvitationPendingError(message, statusCode, code, details);
+    case 'LAST_ADMIN':
+      return new LastAdminError(message, statusCode, code, details);
+    case 'LAST_SUBJECT':
+      return new LastSubjectError(message, statusCode, code, details);
+    case 'QUOTA_EXCEEDED':
+      return new QuotaExceededError(message, statusCode, details);
+    case 'MISSING_API_KEY':
+    case 'MISSING_ORGANIZATION':
+      return new AuthenticationError(message, statusCode, details);
+  }
+
+  switch (statusCode) {
+    case 401:
+      return new AuthenticationError(message, statusCode, details);
+    case 403:
+      return new ForbiddenError(message, statusCode, details);
+    case 402:
+      return new QuotaExceededError(message, statusCode, details);
+  }
+
+  return new APIServiceError(statusCode, code, message, details);
+}
+
 export interface HttpClientConfig {
   apiKey: string;
   jwtToken?: string;
@@ -157,7 +238,8 @@ export class HttpClient {
   async request<T>(opts: RequestOptions): Promise<T> {
     const method = opts.method ?? 'POST';
     const timeoutMs = opts.timeout ?? this.config.timeout;
-    const maxRetries = this.config.maxRetries;
+    const maxRetries =
+      opts.isApiService && method !== 'GET' ? 0 : this.config.maxRetries;
 
     let attempt = 0;
     while (true) {
@@ -171,13 +253,19 @@ export class HttpClient {
 
       const now = Date.now();
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
+        ...(opts.isApiService
+          ? { Accept: 'application/json' }
+          : { 'Content-Type': 'application/json' }),
         'X-API-Key': this.config.apiKey,
         'X-Geo-Environment': this.config.environment,
         'X-Request-Time': now.toString(),
         'X-Signature': generateHMACSignature(this.config.apiKey, now),
         'User-Agent': USER_AGENT,
       };
+
+      if (opts.isApiService && opts.body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+      }
 
       if (this.config.jwtToken) {
         headers['Authorization'] = `Bearer ${this.config.jwtToken}`;
@@ -217,7 +305,9 @@ export class HttpClient {
         const responseText = await response.text();
 
         if (!response.ok) {
-          throw parseHttpError(response.status, responseText, opts.isSpatial);
+          throw opts.isApiService
+            ? parseApiServiceError(response.status, responseText)
+            : parseHttpError(response.status, responseText, opts.isSpatial);
         }
 
         if (!responseText || responseText.trim() === '') {
@@ -226,10 +316,12 @@ export class HttpClient {
 
         const json = JSON.parse(responseText);
 
-        // In Spatial API, responses are wrapped in { success: boolean, data: T }
-        if (opts.isSpatial && typeof json === 'object' && json !== null && 'success' in json) {
+        // api-service responses are wrapped in { success: boolean, data: T }
+        if ((opts.isSpatial || opts.isApiService) && typeof json === 'object' && json !== null && 'success' in json) {
           if (!json.success) {
-            throw parseHttpError(response.status, responseText, true);
+            throw opts.isApiService
+              ? parseApiServiceError(response.status, responseText)
+              : parseHttpError(response.status, responseText, true);
           }
           return json.data as T;
         }

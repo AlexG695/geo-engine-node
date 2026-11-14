@@ -11,6 +11,33 @@ export {
   GeneralGeofenceCheck,
 } from './spatial.js';
 
+// Re-export Users module
+export {
+  UsersService,
+  Roles,
+  UserStatus,
+  type User,
+  type Role,
+  type InviteUserRequest,
+  type Invitation,
+} from './users.js';
+
+// Re-export GeoIdentity module
+export {
+  GeoIdentityService,
+  RuleActions,
+  SubjectTypes,
+  polygonFromLatLng,
+  type RuleAction,
+  type SubjectType,
+  type SubjectAssignment,
+  type GeoLimit,
+  type Rule,
+  type CreateRuleRequest,
+  type UpdateRuleRequest,
+  type ListRulesOptions,
+} from './geoidentity.js';
+
 // Re-export Async Ingestion
 export { AsyncIngester, type IngesterClient } from './ingester.js';
 
@@ -48,6 +75,18 @@ export {
   AuthenticationError,
   ForbiddenError,
   TimeoutError,
+  UserIDRequiredError,
+  RuleIDRequiredError,
+  RuleNameRequiredError,
+  EmailRequiredError,
+  RoleRequiredError,
+  APIServiceError,
+  UserNotFoundError,
+  RuleNotFoundError,
+  UserAlreadyExistsError,
+  InvitationPendingError,
+  LastAdminError,
+  LastSubjectError,
   type SpatialErrorDetail,
 } from './errors.js';
 

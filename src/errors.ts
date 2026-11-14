@@ -232,3 +232,153 @@ export class TimeoutError extends GeoEngineError {
     this.name = 'TimeoutError';
   }
 }
+
+/**
+ * Error thrown when a user ID is missing or empty.
+ * Equivalent to Go's ErrUserIDRequired.
+ */
+export class UserIDRequiredError extends ValidationError {
+  constructor(message = 'geoengine: user_id is required') {
+    super(message);
+    this.name = 'UserIDRequiredError';
+  }
+}
+
+/**
+ * Error thrown when a GeoIdentity rule ID is missing or empty.
+ * Equivalent to Go's ErrRuleIDRequired.
+ */
+export class RuleIDRequiredError extends ValidationError {
+  constructor(message = 'geoengine: rule_id is required') {
+    super(message);
+    this.name = 'RuleIDRequiredError';
+  }
+}
+
+/**
+ * Error thrown when a GeoIdentity rule name is missing or empty.
+ * Equivalent to Go's ErrRuleNameRequired.
+ */
+export class RuleNameRequiredError extends ValidationError {
+  constructor(message = 'geoengine: rule name is required') {
+    super(message);
+    this.name = 'RuleNameRequiredError';
+  }
+}
+
+/**
+ * Error thrown when an invitation email is missing or empty.
+ * Equivalent to Go's ErrEmailRequired.
+ */
+export class EmailRequiredError extends ValidationError {
+  constructor(message = 'geoengine: email is required') {
+    super(message);
+    this.name = 'EmailRequiredError';
+  }
+}
+
+/**
+ * Error thrown when a role is missing or empty.
+ * Equivalent to Go's ErrRoleRequired.
+ */
+export class RoleRequiredError extends ValidationError {
+  constructor(message = 'geoengine: role is required') {
+    super(message);
+    this.name = 'RoleRequiredError';
+  }
+}
+
+/**
+ * Structured error returned by the api-service Users and GeoIdentity endpoints.
+ * Equivalent to Go's APIServiceError. Branch on the subclasses (for example
+ * UserNotFoundError) or on `code`.
+ */
+export class APIServiceError extends APIError {
+  /** Machine-readable reason, e.g. "USER_NOT_FOUND". Empty when the API sent none. */
+  readonly code: string;
+  /** Message returned by the API, without the SDK prefix. */
+  readonly apiMessage: string;
+  readonly details: SpatialErrorDetail[];
+
+  constructor(
+    statusCode: number,
+    code: string,
+    message: string,
+    details: SpatialErrorDetail[] = []
+  ) {
+    super(statusCode, message);
+    this.message = code
+      ? `geoengine: api-service error (status ${statusCode}, code ${code}): ${message}`
+      : `geoengine: api-service error (status ${statusCode}): ${message}`;
+    this.name = 'APIServiceError';
+    this.code = code;
+    this.apiMessage = message;
+    this.details = details;
+  }
+}
+
+/**
+ * The user does not exist in the organization (or its access was revoked).
+ * Equivalent to Go's ErrUserNotFound.
+ */
+export class UserNotFoundError extends APIServiceError {
+  constructor(message = 'user not found in organization', statusCode = 404, code = 'USER_NOT_FOUND', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'UserNotFoundError';
+  }
+}
+
+/**
+ * The GeoIdentity rule does not exist.
+ * Equivalent to Go's ErrRuleNotFound.
+ */
+export class RuleNotFoundError extends APIServiceError {
+  constructor(message = 'geoidentity rule not found', statusCode = 404, code = 'RULE_NOT_FOUND', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'RuleNotFoundError';
+  }
+}
+
+/**
+ * The invited email already belongs to the organization.
+ * Equivalent to Go's ErrUserAlreadyExists.
+ */
+export class UserAlreadyExistsError extends APIServiceError {
+  constructor(message = 'user already belongs to the organization', statusCode = 409, code = 'USER_ALREADY_EXISTS', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'UserAlreadyExistsError';
+  }
+}
+
+/**
+ * A pending invitation already exists for the email.
+ * Equivalent to Go's ErrInvitationPending.
+ */
+export class InvitationPendingError extends APIServiceError {
+  constructor(message = 'a pending invitation already exists for this email', statusCode = 409, code = 'INVITATION_PENDING', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'InvitationPendingError';
+  }
+}
+
+/**
+ * The operation would leave the organization without an admin.
+ * Equivalent to Go's ErrLastAdmin.
+ */
+export class LastAdminError extends APIServiceError {
+  constructor(message = 'organization must keep at least one admin', statusCode = 409, code = 'LAST_ADMIN', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'LastAdminError';
+  }
+}
+
+/**
+ * The operation would leave a rule without assigned subjects.
+ * Equivalent to Go's ErrLastSubject.
+ */
+export class LastSubjectError extends APIServiceError {
+  constructor(message = 'rule must keep at least one assigned subject', statusCode = 409, code = 'LAST_SUBJECT', details: SpatialErrorDetail[] = []) {
+    super(statusCode, code, message, details);
+    this.name = 'LastSubjectError';
+  }
+}
