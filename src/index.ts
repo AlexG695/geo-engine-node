@@ -98,6 +98,40 @@ export {
   validateAndNormalizePolygon,
 } from './validation.js';
 
+// Re-export GeoIdentity runtime evaluation (/v1/evaluate)
+export { IdentityService, type IdentityServiceConfig } from './identity/evaluate.js';
+export {
+  IdentityTransientError,
+  IdentityIntegrationError,
+  isTransient,
+  type IdentityErrorFields,
+} from './identity/errors.js';
+export type {
+  LocationSource,
+  Location,
+  Context,
+  Subject,
+  EvaluateRequest,
+  EvaluateOptions,
+  KnownDecision,
+  Decision,
+  EvaluateReason,
+  KnownSignal,
+  EvaluateSignal,
+  RuleRef,
+  ShadowMatch,
+  Challenge,
+  MetaSource,
+  ReputationStatus,
+  EvaluateMeta,
+  EvaluateResponse,
+  IdentityTransientReason,
+  FallbackReason,
+  IdentityIntegrationReason,
+  FallbackDecision,
+  IdentityDecision,
+} from './identity/types.js';
+
 // Re-export HMAC signature utility
 export { generateHMACSignature } from './crypto.js';
 

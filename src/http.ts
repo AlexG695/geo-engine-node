@@ -186,13 +186,13 @@ export function parseApiServiceError(statusCode: number, bodyText: string): APIE
 }
 
 export interface HttpClientConfig {
-  apiKey: string;
   jwtToken?: string;
   environment: string;
   managementUrl: string;
   ingestUrl: string;
   apiServiceUrl: string;
   timeout: number;
+  identityTimeoutMs: number;
   maxRetries: number;
   batchSize: number;
   flushInterval: number;
@@ -205,6 +205,7 @@ export interface HttpClientConfig {
  * timeouts via AbortController, and exponential backoff retries.
  */
 export class HttpClient {
+  #apiKey: string;
   private readonly config: HttpClientConfig;
 
   constructor(options: GeoEngineOptions = {}) {
@@ -212,14 +213,15 @@ export class HttpClient {
     const defaultIngest = 'https://ingest.geoengine.dev';
     const defaultApiService = 'https://api.geoengine.dev';
 
+    this.#apiKey = options.apiKey ?? '';
     this.config = {
-      apiKey: options.apiKey ?? '',
       jwtToken: options.jwtToken,
       environment: options.environment ?? 'live',
       managementUrl: options.baseUrl ?? options.managementUrl ?? defaultManagement,
       ingestUrl: options.baseUrl ?? options.ingestUrl ?? defaultIngest,
       apiServiceUrl: options.baseUrl ?? options.apiServiceUrl ?? defaultApiService,
       timeout: options.timeout ?? 10000,
+      identityTimeoutMs: options.identityTimeoutMs ?? 500,
       maxRetries: options.maxRetries ?? 2,
       batchSize: options.batchSize ?? 100,
       flushInterval: options.flushInterval ?? 500,
@@ -230,6 +232,27 @@ export class HttpClient {
 
   get options(): Readonly<HttpClientConfig> {
     return this.config;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      apiKey: '[REDACTED]',
+      ...(this.config.jwtToken ? { jwtToken: '[REDACTED]' } : {}),
+      environment: this.config.environment,
+      managementUrl: this.config.managementUrl,
+      ingestUrl: this.config.ingestUrl,
+      apiServiceUrl: this.config.apiServiceUrl,
+      timeout: this.config.timeout,
+      identityTimeoutMs: this.config.identityTimeoutMs,
+      maxRetries: this.config.maxRetries,
+      batchSize: this.config.batchSize,
+      flushInterval: this.config.flushInterval,
+      bufferSize: this.config.bufferSize,
+    };
+  }
+
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**
@@ -256,10 +279,10 @@ export class HttpClient {
         ...(opts.isApiService
           ? { Accept: 'application/json' }
           : { 'Content-Type': 'application/json' }),
-        'X-API-Key': this.config.apiKey,
+        'X-API-Key': this.#apiKey,
         'X-Geo-Environment': this.config.environment,
         'X-Request-Time': now.toString(),
-        'X-Signature': generateHMACSignature(this.config.apiKey, now),
+        'X-Signature': generateHMACSignature(this.#apiKey, now),
         'User-Agent': USER_AGENT,
       };
 

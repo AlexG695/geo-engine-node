@@ -8,21 +8,43 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./identity": {
+      "import": {
+        "types": "./dist/identity.d.ts",
+        "default": "./dist/identity.js"
+      },
+      "require": {
+        "types": "./dist/identity.d.cts",
+        "default": "./dist/identity.cjs"
+      }
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexG695/geo-engine-node.git"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run tests/*.test.ts && npm run build && npm run test:identity",
+    "test:unit": "vitest run tests/*.test.ts",
+    "test:identity": "node --test tests/identity.test.mjs",
+    "test:watch": "vitest tests/*.test.ts",
     "example": "node examples/simulation.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run typecheck && npm run test"
   },
   "keywords": [
     "geoengine",
