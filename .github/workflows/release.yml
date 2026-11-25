@@ -224,6 +224,28 @@ jobs:
             [ "$LATEST" != "$VERSION" ] || { echo "::error::Prerelease $VERSION is the latest tag"; exit 1; }
           fi
 
+      # Provenance must exist for the published version. The `dist.attestations` field is read
+      # with npm view dot notation (https://docs.npmjs.com/cli/v11/commands/npm-view); the field
+      # itself is not documented by npm, its shape was observed on the registry
+      # (dist.attestations.provenance.predicateType). Attestations may lag, so retry.
+      - name: Require provenance attestation on the published version
+        working-directory: smoke
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            PROVENANCE="$(npm view "geo-engine-node@$VERSION" dist.attestations.provenance.predicateType 2>/dev/null || true)"
+            if [ -n "$PROVENANCE" ]; then
+              echo "Provenance present: $PROVENANCE"
+              exit 0
+            fi
+            echo "No provenance attestation yet (attempt $attempt), retrying in 15s"
+            sleep 15
+          done
+          echo "::error::geo-engine-node@$VERSION was published WITHOUT a provenance attestation. Next step: review whether publishing a tarball (npm publish ./file.tgz) generates provenance with trusted publishing; the npm docs do not specify it."
+          exit 1
+
       - name: Verify registry signatures and provenance attestations
         working-directory: smoke
         run: npm audit signatures

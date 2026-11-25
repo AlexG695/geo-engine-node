@@ -16,6 +16,11 @@ Release candidate, published under the npm `next` dist-tag. The GeoIdentity modu
 - **Minimum Node.js is 20** (`engines.node >=20.0.0`); the CI matrix is Node 20 and 22.
 - Identity types `Location`, `Context` and `Subject` are exported as `IdentityLocation`, `IdentityContext` and `IdentitySubject` (no aliases).
 
+### Security
+
+- Error messages from legacy routes no longer include the API key or the JWT, even if the server echoes them in the response body.
+- Published sourcemaps no longer contain absolute local paths.
+
 ### Added
 - Server-only GeoIdentity runtime evaluation via `client.identity.evaluate({ scope, subject, context })` against `POST /v1/evaluate`, using `Authorization: Bearer <apiKey>` and automatic `X-Request-Id` propagation.
 - New subpath export `geo-engine-node/identity` (ESM & CJS) providing Express/Connect-compatible `identityGuard({ client, scope, getSubject, getContext, failOpen, ... })` with mandatory `failOpen`, `CHALLENGE` handling, synthetic fallback decisions (`meta.source = 'sdk_fallback'`), and browser runtime protection.
