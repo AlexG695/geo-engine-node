@@ -1,0 +1,495 @@
+openapi: 3.1.0
+info:
+  title: GeoEngine Public API
+  version: 1.0.0-draft.3
+  summary: Contrato público /v1 (borrador). Parte 2 - POST /v1/evaluate.
+  description: |
+    Contrato del endpoint de decisión de GeoIdentity. GeoIdentity es un candado
+    de acceso contextual: NO es un proveedor de identidad. La ubicación es una
+    señal, no una prueba.
+
+    Reglas de decisión (normativas):
+    1. Las reglas del scope se evalúan en orden estricto de `priority` ascendente.
+    2. Cada regla tiene su propio modo: `enforce` o `monitor` (configuración de la
+       regla, no de la petición).
+    3. Gana la PRIMERA regla en modo `enforce` que coincide; las reglas no se combinan.
+    4. Una regla en modo `monitor` que coincide NO detiene la evaluación ni cambia
+       la decisión: se informa en `shadow_matches` y se continúa con la siguiente.
+    5. Empates de prioridad: se resuelven por `created_at` ascendente y luego por `id`.
+    6. Si ninguna regla `enforce` coincide se aplica la acción por defecto del scope
+       (`default_action`, configurada por el cliente; valor inicial ALLOW). La acción
+       por defecto siempre se aplica: no tiene modo monitor.
+
+    Compatibilidad: solo se agregan campos opcionales dentro de /v1. Los clientes
+    deben ignorar campos desconocidos y tratar valores de enum desconocidos con la
+    política de falla del scope (failOpen / failClosed).
+
+    El endpoint es idempotente a nivel de decisión: reintentar con el mismo cuerpo
+    es seguro. Cada decisión se registra de forma SÍNCRONA, dentro de la misma
+    petición, como una línea JSON a stdout (no forma parte del contrato de respuesta
+    y no hay trabajo en segundo plano).
+
+    Estado de esta versión (lo que el servicio hace HOY; lo marcado como
+    "reservado" o "planificado" no está implementado):
+    - Autenticación: solo se valida la llave (formato Bearer, hash, llave activa).
+      NO se validan entorno live/test, scopes permitidos, `allowed_ips`,
+      `allowed_origins` ni expiración (planificado).
+    - No hay limitación de tasa en el servicio ni cuota (402) en /v1 (planificado).
+    - La configuración se lee de Postgres en cada decisión (`meta.source` = `postgres`).
+    - Los fallos del servicio (503) nunca incluyen una decisión: el SDK aplica la
+      política de falla local del scope.
+  license:
+    name: TBD
+servers:
+  - url: https://api.geoengine.dev
+    description: Producción (placeholder, por confirmar)
+security:
+  - bearerKey: []
+tags:
+  - name: Decision
+    description: Decisiones de acceso contextual (GeoIdentity).
+paths:
+  /v1/evaluate:
+    post:
+      tags: [Decision]
+      operationId: evaluate
+      summary: Evalúa un intento de acceso contra las reglas publicadas del scope.
+      description: |
+        Devuelve ALLOW, BLOCK o CHALLENGE. CHALLENGE indica a la aplicación que
+        pida una verificación adicional (step-up); la aplicación decide cómo.
+        Nunca se devuelve una decisión dentro de una respuesta de error: ante
+        error o timeout, el SDK aplica la política de falla local del scope.
+      parameters:
+        - name: X-Request-Id
+          in: header
+          required: false
+          description: |
+            Identificador de correlación del cliente. Máximo 128 caracteres, sin
+            caracteres de control; si no cumple, el servidor responde 400
+            (`malformed-request`) ANTES de autenticar. Si se omite, el servidor genera
+            uno (UUIDv7). Se devuelve en la cabecera de respuesta `X-Request-Id`, en
+            `meta.request_id` (éxito) y en `request_id` (errores del handler).
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: true
+        description: |
+          JSON de como máximo 16 KiB, un único objeto, sin campos desconocidos. Un
+          cuerpo mayor devuelve 400 `malformed-request` (no 413).
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateRequest"
+            examples:
+              login:
+                summary: Inicio de sesión con ubicación del dispositivo
+                value:
+                  scope: login
+                  subject:
+                    user_id: user_2abc123
+                    roles: [admin]
+                    device_id: dev_9f8e7d
+                  context:
+                    ip: 203.0.113.42
+                    location:
+                      lat: 28.6353
+                      lng: -106.0889
+                      accuracy_m: 25
+                      source: device
+                      captured_at: "2026-11-20T18:30:00Z"
+      responses:
+        "200":
+          description: Decisión tomada.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluateResponse"
+              examples:
+                allowByDefault:
+                  summary: Ninguna regla enforce coincide; se aplica el valor por defecto del scope
+                  value:
+                    decision: ALLOW
+                    matched_rule: null
+                    default_applied: true
+                    reason: DEFAULT_ACTION
+                    signals: []
+                    shadow_matches: []
+                    meta:
+                      config_version: 42
+                      stale: false
+                      config_age_s: 0
+                      source: postgres
+                      evaluated_at: "2026-11-20T18:30:00.412Z"
+                      request_id: req_01
+                      reputation: not_needed
+                shadowOnly:
+                  summary: Una regla en monitor coincide; no cambia la decisión, solo se informa
+                  value:
+                    decision: ALLOW
+                    matched_rule: null
+                    default_applied: true
+                    reason: DEFAULT_ACTION
+                    signals: []
+                    shadow_matches:
+                      - rule:
+                          id: rule_7
+                          name: Fuera de zona permitida
+                          priority: 10
+                        would_decide: BLOCK
+                        signals: [outside_geo_limit]
+                    meta:
+                      config_version: 42
+                      stale: false
+                      config_age_s: 0
+                      source: postgres
+                      evaluated_at: "2026-11-20T18:30:00.420Z"
+                      request_id: req_02
+                challenge:
+                  summary: Regla enforce que pide verificación adicional
+                  value:
+                    decision: CHALLENGE
+                    matched_rule:
+                      id: rule_9
+                      name: Fuera de la zona del administrador
+                      priority: 20
+                    default_applied: false
+                    reason: RULE_MATCH
+                    signals: [outside_geo_limit]
+                    shadow_matches: []
+                    challenge:
+                      hint: step_up
+                    meta:
+                      config_version: 42
+                      stale: false
+                      config_age_s: 0
+                      source: postgres
+                      evaluated_at: "2026-11-20T18:30:00.431Z"
+                      request_id: req_03
+                      reputation: ok
+        "400":
+          description: |
+            `malformed-request`: JSON ilegible, campo desconocido, tipo incorrecto, más de
+            un objeto, cuerpo mayor de 16 KiB, o `X-Request-Id` inválido.
+          $ref: "#/components/responses/Problem"
+        "401":
+          description: |
+            `unauthorized`: sin `Authorization`, esquema distinto de Bearer, llave
+            inexistente, inactiva o revocada, o la organización de la llave no es un UUID
+            válido. El mensaje es siempre el mismo (no distingue la causa).
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/EdgeForbidden"
+        "422":
+          description: |
+            `invalid-request` (cuerpo bien formado con contenido inválido) o
+            `scope-not-found` (la organización no tiene un scope con ese slug).
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/EdgeRateLimited"
+        "503":
+          description: |
+            `unavailable`: no se pudo calcular la decisión (base de datos caída o lenta,
+            o fallo interno). No incluye decisión: aplicar la política de falla local.
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerKey:
+      type: http
+      scheme: bearer
+      description: |
+        API key en `Authorization: Bearer <key>` (máximo 512 caracteres). El
+        servidor guarda solo su hash (sha256).
+
+        Validado hoy: formato Bearer, hash y que la llave esté activa. Revocar una
+        llave borra su entrada de caché de autenticación, por lo que deja de valer
+        de inmediato.
+
+        PLANIFICADO, NO VALIDADO HOY: ligadura de la llave a un entorno (live/test),
+        scopes permitidos, `allowed_ips`, `allowed_origins` y fecha de expiración.
+
+        El esquema legado X-API-Key + X-Signature queda fuera de /v1: /v1 no valida
+        `X-Signature` ni `X-Request-Time`.
+  schemas:
+    EvaluateRequest:
+      type: object
+      required: [scope, subject]
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z0-9][a-z0-9_.-]*$"
+          description: Qué se protege (por ejemplo `login`, `checkout`). Define las reglas y la acción por defecto.
+        subject:
+          $ref: "#/components/schemas/Subject"
+        context:
+          $ref: "#/components/schemas/Context"
+    Subject:
+      type: object
+      description: |
+        Quién intenta acceder. Todos los identificadores son cadenas opacas
+        definidas por el cliente (no se asume UUID). Se requiere al menos
+        `user_id` o `device_id`.
+      additionalProperties: false
+      anyOf:
+        - required: [user_id]
+        - required: [device_id]
+      properties:
+        user_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        roles:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+    Context:
+      type: object
+      additionalProperties: false
+      properties:
+        ip:
+          type: string
+          description: IP del cliente final (IPv4 o IPv6). Sin ella no se evalúan reglas de IP, datacenter ni Tor.
+        location:
+          $ref: "#/components/schemas/Location"
+    Location:
+      type: object
+      description: La ubicación es una señal, no una prueba. Sin `accuracy_m` y `captured_at` el motor puede ignorarla.
+      required: [lat, lng]
+      additionalProperties: false
+      properties:
+        lat:
+          type: number
+          minimum: -90
+          maximum: 90
+        lng:
+          type: number
+          minimum: -180
+          maximum: 180
+        accuracy_m:
+          type: number
+          minimum: 0
+        source:
+          type: string
+          enum: [device, ip, wifi, cell, manual]
+        captured_at:
+          type: string
+          format: date-time
+    EvaluateResponse:
+      type: object
+      required:
+        [
+          decision,
+          matched_rule,
+          default_applied,
+          reason,
+          signals,
+          shadow_matches,
+          meta,
+        ]
+      properties:
+        decision:
+          $ref: "#/components/schemas/Action"
+          description: Decisión efectiva que la aplicación debe respetar.
+        matched_rule:
+          description: Regla enforce ganadora, o null si se aplicó la acción por defecto.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/RuleRef"
+        default_applied:
+          type: boolean
+        reason:
+          type: string
+          enum: [RULE_MATCH, DEFAULT_ACTION]
+        signals:
+          type: array
+          description: Señales que dispararon la regla ganadora (vacío si se aplicó la acción por defecto). Conjunto abierto.
+          items:
+            type: string
+            examples:
+              [
+                outside_geo_limit,
+                location_missing,
+                ip_blocklist,
+                ip_not_allowlist,
+              ]
+            description: |
+              `datacenter_ip` y `tor_exit` están reservados: hoy NO se disparan porque
+              el servicio no tiene conectado un proveedor de reputación de IP (siempre
+              noop). Los clientes deben tratar cualquier valor desconocido con la
+              política de falla del scope.
+        shadow_matches:
+          type: array
+          description: Reglas en modo monitor que coincidieron antes de la decisión final. No afectan `decision`.
+          items:
+            $ref: "#/components/schemas/ShadowMatch"
+        challenge:
+          type: object
+          description: Presente solo cuando `decision` es CHALLENGE.
+          properties:
+            hint:
+              type: string
+              enum: [step_up]
+        meta:
+          $ref: "#/components/schemas/Meta"
+    Action:
+      type: string
+      enum: [ALLOW, BLOCK, CHALLENGE]
+    RuleRef:
+      type: object
+      required: [id, name, priority]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        priority:
+          type: integer
+    ShadowMatch:
+      type: object
+      required: [rule, would_decide]
+      properties:
+        rule:
+          $ref: "#/components/schemas/RuleRef"
+        would_decide:
+          $ref: "#/components/schemas/Action"
+        signals:
+          type: array
+          items:
+            type: string
+    Meta:
+      type: object
+      required: [config_version, stale, config_age_s, source, evaluated_at]
+      properties:
+        config_version:
+          type: integer
+          description: |
+            Contador monótono por scope: sube con cada cambio de reglas, asignaciones
+            o `default_action`. NO es una versión publicada ni inmutable.
+        stale:
+          type: boolean
+          description: Reservado. Hoy siempre `false` (no hay caché que envejezca).
+        config_age_s:
+          type: integer
+          minimum: 0
+          description: Reservado. Hoy siempre `0` (lectura directa).
+        source:
+          type: string
+          enum: [postgres, redis, memory, snapshot, fallback]
+          description: |
+            Origen de la configuración usada. HOY SIEMPRE `postgres` (lectura directa
+            a la base, sin caché). `redis`, `memory`, `snapshot` y `fallback` están
+            reservados para fases con capa de memoria y degradación real; un cliente
+            debe tolerarlos.
+        evaluated_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        reputation:
+          type: string
+          enum: [not_needed, ok, unavailable]
+          description: |
+            Campo opcional. Estado de la consulta de reputación de la IP, de la que dependen las señales
+            `datacenter_ip` y `tor_exit`:
+            - `not_needed`: no hizo falta consultar (el scope no tiene ninguna regla activa con
+              `block_datacenter` o `block_tor`, o la petición no trae `context.ip`).
+            - `ok`: se consultó y las señales de reputación son fiables para esta decisión.
+            - `unavailable`: hacía falta pero no hubo dato (proveedor desactivado, tiempo agotado, error o
+              cortacircuitos abierto): `datacenter_ip` y `tor_exit` **no se disparan** en esta decisión.
+            Los clientes deben ignorar valores desconocidos.
+    Problem:
+      type: object
+      description: |
+        Error en formato RFC 9457 (application/problem+json) producido por el handler.
+        `type` es una URN `urn:geoengine:problem:<slug>` (siempre con guion medio).
+        Los slugs que emite /v1 hoy son: `unauthorized` (401), `malformed-request` (400),
+        `invalid-request` (422), `scope-not-found` (422) y `unavailable` (503).
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        request_id:
+          type: string
+        retry_after_s:
+          type: integer
+          description: |
+            Reservado. Hoy el servidor nunca lo rellena ni envía la cabecera
+            `Retry-After`; no debe usarse para decidir reintentos.
+  responses:
+    Problem:
+      description: Error del handler. Nunca contiene una decisión.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/CacheControl"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem401:
+      description: Error de autenticación. Nunca contiene una decisión.
+      headers:
+        WWW-Authenticate:
+          description: Siempre `Bearer realm="geoengine"`.
+          schema:
+            type: string
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/CacheControl"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    EdgeForbidden:
+      description: |
+        RESPUESTA DE BORDE, no del handler. El handler no produce 403. Lo devuelve el
+        middleware de origen (la petición no pasó por Cloudflare: falta o no coincide
+        `X-Custom-Auth-Secret`). NO es `application/problem+json`, NO lleva
+        `X-Request-Id` y su cuerpo es `{"error": "..."}`. Un SDK debe tratarlo como un
+        fallo sin tipo (aplicar la política de falla local).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    EdgeRateLimited:
+      description: |
+        RESERVADA. Hoy el servicio no limita la tasa en /v1 y no existe ningún 429 en
+        esta ruta. Si en el futuro el borde (Cloudflare) limita peticiones, su respuesta
+        no está garantizada como `application/problem+json` ni lleva `Retry-After`.
+        Los clientes deben tolerarla como un fallo transitorio sin tipo.
+  headers:
+    XRequestId:
+      description: Eco del `X-Request-Id` del cliente (válido) o el generado por el servidor.
+      schema:
+        type: string
+        maxLength: 128
+    CacheControl:
+      description: Siempre `no-store`.
+      schema:
+        type: string
