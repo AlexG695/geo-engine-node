@@ -1,6 +1,6 @@
 {
   "name": "geo-engine-node",
-  "version": "2.1.0",
+  "version": "3.0.0-rc.1",
   "type": "module",
   "description": "Official Node.js and TypeScript SDK for the Geo-Engine platform.",
   "main": "./dist/index.cjs",
@@ -30,7 +30,9 @@
   },
   "files": [
     "dist",
-    "LICENSE"
+    "README*",
+    "LICENSE",
+    "CHANGELOG*"
   ],
   "repository": {
     "type": "git",
@@ -45,7 +47,8 @@
     "test:watch": "vitest tests/*.test.ts",
     "example": "node examples/simulation.js",
     "prepublishOnly": "npm run typecheck && npm run test",
-    "test:formats": "node --test tests/formats.test.mjs"
+    "test:formats": "node --test tests/formats.test.mjs",
+    "prepack": "npm run build"
   },
   "keywords": [
     "geoengine",
@@ -68,5 +71,8 @@
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
     "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

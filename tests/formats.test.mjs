@@ -102,3 +102,21 @@ describe('identity.evaluate redirects', () => {
     }
   });
 });
+
+describe('published artifacts', () => {
+  it('sourcemaps contain no absolute or local paths', async () => {
+    const { readdirSync } = await import('node:fs');
+    const { isAbsolute } = await import('node:path');
+    const dist = new URL('../dist/', import.meta.url);
+    const maps = readdirSync(dist).filter((f) => f.endsWith('.map'));
+    assert.ok(maps.length > 0);
+    for (const name of maps) {
+      const raw = readFileSync(new URL(name, dist), 'utf8');
+      const map = JSON.parse(raw);
+      assert.ok(!map.file || !isAbsolute(map.file), `${name}: absolute "file"`);
+      for (const src of map.sources) assert.ok(!isAbsolute(src), `${name}: absolute source`);
+      assert.ok(!raw.includes(process.cwd()), `${name}: contains the working directory`);
+      assert.ok(!raw.includes('/home/'), `${name}: contains /home/`);
+    }
+  });
+});

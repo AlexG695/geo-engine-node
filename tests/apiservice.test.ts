@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -24,6 +25,10 @@ import {
   UserIDRequiredError,
   UserNotFoundError,
 } from '../src/index.js';
+
+const pkgVersion = (
+  JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
 
 interface Captured {
   method: string;
@@ -138,7 +143,7 @@ describe('Users module', () => {
     expect(req.headers['x-signature']).toMatch(/^[0-9a-f]{64}$/);
     expect(req.headers['accept']).toBe('application/json');
     expect(req.headers['content-type']).toBeUndefined();
-    expect(req.headers['user-agent']).toBe('GeoEngineNodeSDK/2.1.0');
+    expect(req.headers['user-agent']).toBe(`GeoEngineNodeSDK/${pkgVersion}`);
     expect(client.Users).toBe(client.users);
   });
 

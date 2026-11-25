@@ -7,7 +7,9 @@
 
 > *Read this in Spanish: [README.es.md](./README.es.md)*
 
-Official **Node.js & TypeScript** client for the **Geo-Engine** platform (`v2.1.0`).  
+Official **Node.js & TypeScript** client for the **Geo-Engine** platform (`v3.0.0-rc.1`).
+
+> ⚠️ **Release candidate / experimental:** `v3.0.0-rc.1` is published under the `next` dist-tag (`npm install geo-engine-node@next`). The GeoIdentity module (`client.identity`, `geo-engine-node/identity`) is **experimental**: its API contract (`/v1/evaluate`) is still a **draft** and it is **not recommended for production**. This is a major release with breaking changes; see [CHANGELOG.md](./CHANGELOG.md) for migration notes.  
 Designed for strict TypeScript safety, zero runtime dependencies, and server-side integration in Node.js `>=20`.
 
 ---
@@ -50,7 +52,9 @@ bun add geo-engine-node
 import GeoEngine from 'geo-engine-node';
 
 // Initialize with your secret API key
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 try {
   await client.sendLocation('truck-01', 19.4326, -99.1332);
@@ -67,7 +71,9 @@ try {
 ```js
 const GeoEngine = require('geo-engine-node');
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 client.sendLocation('scooter-09', 19.4326, -99.1332)
   .then(() => console.log('Location registered'))
@@ -87,7 +93,9 @@ client.sendLocation('scooter-09', 19.4326, -99.1332)
 import GeoEngine from 'geo-engine-node';
 import { IdentityTransientError, IdentityIntegrationError, isTransient } from 'geo-engine-node/identity';
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 try {
   const decision = await client.identity.evaluate({
@@ -119,7 +127,9 @@ try {
 import GeoEngine from 'geo-engine-node';
 import { identityGuard } from 'geo-engine-node/identity';
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 app.post(
   '/login',
@@ -160,7 +170,9 @@ The `client.spatial` module connects to the GeoEngine API service to evaluate sp
 ```ts
 import GeoEngine, { GeofenceNotFoundError } from 'geo-engine-node';
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 try {
   const res = await client.spatial.validatePoint('geofence_123', 19.4326, -99.1332);
@@ -222,7 +234,9 @@ The `client.users` module manages the members of the organization that owns the 
 ```ts
 import GeoEngine, { Roles, InvitationPendingError, LastAdminError } from 'geo-engine-node';
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 
 const users = await client.users.list();
 const roles = await client.users.listRoles();
@@ -312,7 +326,9 @@ Queue telemetry pings in memory and dispatch them periodically (`sendLocation` p
 ```ts
 import GeoEngine from 'geo-engine-node';
 
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey);
 const ingester = client.createAsyncIngester(5000, 100, 500);
 
 const ok = ingester.enqueue({
@@ -335,7 +351,9 @@ client.close();
 ## 🔧 Advanced Configuration
 
 ```ts
-const client = new GeoEngine(process.env.GEOENGINE_API_KEY!, {
+const apiKey = process.env.GEOENGINE_API_KEY;
+if (!apiKey) throw new Error('GEOENGINE_API_KEY is not set');
+const client = new GeoEngine(apiKey, {
   environment: 'live', // 'live' | 'test' (sent as X-Geo-Environment on legacy routes)
   jwtToken: 'my.jwt.token',
   timeout: 5000, // legacy routes timeout in ms

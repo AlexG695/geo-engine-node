@@ -1,0 +1,262 @@
+# Release workflow: publishes to npm with trusted publishing (OIDC) when a version tag is pushed.
+# Expected tag for the current release candidate: v3.0.0-rc.1
+#
+# - No NPM_TOKEN / NODE_AUTH_TOKEN anywhere: authentication is OIDC only.
+# - The npm trusted publisher must be configured on npmjs.com for this exact workflow
+#   file name (release.yml) and environment (npm-publish):
+#   https://docs.npmjs.com/trusted-publishers
+# - setup-node is used WITHOUT `registry-url`, so it writes no .npmrc and exports no
+#   NODE_AUTH_TOKEN that could shadow the OIDC flow; npm defaults to https://registry.npmjs.org.
+#   Background: https://github.com/actions/setup-node/issues/1440 and the "Publishing to npm
+#   with Trusted Publisher (OIDC)" section of
+#   https://github.com/actions/setup-node/blob/main/docs/advanced-usage.md
+#   (OIDC "does not use NODE_AUTH_TOKEN", per https://github.com/actions/setup-node README, v7 notes).
+# - Prerelease versions are published ONLY with --tag next; the `latest` tag is never moved by them.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      dist_tag: ${{ steps.check.outputs.dist_tag }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check tag, ancestry and version
+        id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Tag is not a valid version tag (expected vX.Y.Z or vX.Y.Z-suffix)"; exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" origin/main; then
+            echo "::error::Tagged commit is not an ancestor of origin/main"; exit 1
+          fi
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${TAG#v}" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version (${TAG#v}) does not match package.json ($PKG_VERSION)"; exit 1
+          fi
+          if printf '%s' "$PKG_VERSION" | grep -q -- '-'; then
+            DIST_TAG=next
+          else
+            DIST_TAG=latest
+          fi
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Validated $PKG_VERSION -> dist-tag $DIST_TAG"
+
+  build:
+    name: Build and pack
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies (no lifecycle scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build and test
+        run: npm test
+
+      - name: Pack tarball and compute sha256
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          npm pack --pack-destination out
+          cd out
+          sha256sum -- *.tgz > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-tarball
+          path: |
+            out/*.tgz
+            out/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish to npm
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-publish
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Check Node and npm versions
+        run: |
+          set -euo pipefail
+          node -e '
+            const cmp = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number);
+              for (let i = 0; i < 3; i++) { if ((x[i]||0) !== (y[i]||0)) return (x[i]||0) - (y[i]||0); } return 0; };
+            const nodeV = process.versions.node;
+            const npmV = require("child_process").execSync("npm --version").toString().trim();
+            console.log("node", nodeV, "npm", npmV);
+            if (cmp(nodeV, "22.14.0") < 0) { console.error("Node >= 22.14.0 required for trusted publishing"); process.exit(1); }
+            if (cmp(npmV, "11.5.1") < 0) { console.error("npm >= 11.5.1 required for trusted publishing"); process.exit(1); }
+          '
+
+      - name: Download tarball artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-tarball
+          path: out
+
+      - name: Verify tarball integrity, version and dist-tag guard
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+          DIST_TAG: ${{ needs.validate.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          cd out
+          sha256sum -c SHA256SUMS
+          TARBALL="$(ls -1 -- *.tgz)"
+          [ "$(printf '%s\n' "$TARBALL" | wc -l)" -eq 1 ] || { echo "::error::Expected exactly one tarball"; exit 1; }
+          TARBALL_VERSION="$(tar -xOf "$TARBALL" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")"
+          if [ "$TARBALL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Tarball version ($TARBALL_VERSION) != tag version ($EXPECTED_VERSION)"; exit 1
+          fi
+          # Guard: a prerelease must never be published with the latest tag.
+          if printf '%s' "$EXPECTED_VERSION" | grep -q -- '-' && [ "$DIST_TAG" = "latest" ]; then
+            echo "::error::Prerelease $EXPECTED_VERSION must not be published with dist-tag latest"; exit 1
+          fi
+          if ! printf '%s' "$EXPECTED_VERSION" | grep -q -- '-' && [ "$DIST_TAG" != "latest" ]; then
+            echo "::error::Stable $EXPECTED_VERSION expects dist-tag latest, got $DIST_TAG"; exit 1
+          fi
+          echo "tarball=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: Publish the verified tarball (OIDC, provenance is automatic)
+        env:
+          DIST_TAG: ${{ needs.validate.outputs.dist_tag }}
+        run: npm publish "./out/$tarball" --tag "$DIST_TAG" --access public
+
+  smoke:
+    name: Smoke test published package
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install published version in a clean directory (with retries)
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir smoke && cd smoke
+          npm init -y >/dev/null
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if npm install "geo-engine-node@$VERSION" --ignore-scripts; then
+              exit 0
+            fi
+            echo "Install attempt $attempt failed (registry propagation?), retrying in 15s"
+            sleep 15
+          done
+          echo "::error::Could not install geo-engine-node@$VERSION"; exit 1
+
+      - name: Import both entry points (ESM and CJS) and check dist-tags
+        working-directory: smoke
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          DIST_TAG: ${{ needs.validate.outputs.dist_tag }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "const r = await import('geo-engine-node'); const i = await import('geo-engine-node/identity'); if (typeof r.GeoEngine !== 'function' || typeof i.identityGuard !== 'function') throw new Error('ESM entry points broken'); if (!(new i.IdentityIntegrationError({ message: 'x', reason: 'invalid_request' }) instanceof r.GeoEngineError)) throw new Error('ESM instanceof broken'); console.log('ESM ok')"
+          node -e "const r = require('geo-engine-node'); const i = require('geo-engine-node/identity'); if (typeof r.GeoEngine !== 'function' || typeof i.identityGuard !== 'function') throw new Error('CJS entry points broken'); if (!(new i.IdentityIntegrationError({ message: 'x', reason: 'invalid_request' }) instanceof r.GeoEngineError)) throw new Error('CJS instanceof broken'); console.log('CJS ok')"
+          TAGGED="$(npm view geo-engine-node "dist-tags.$DIST_TAG")"
+          [ "$TAGGED" = "$VERSION" ] || { echo "::error::dist-tag $DIST_TAG points to $TAGGED, expected $VERSION"; exit 1; }
+          if printf '%s' "$VERSION" | grep -q -- '-'; then
+            LATEST="$(npm view geo-engine-node dist-tags.latest)"
+            [ "$LATEST" != "$VERSION" ] || { echo "::error::Prerelease $VERSION is the latest tag"; exit 1; }
+          fi
+
+      - name: Verify registry signatures and provenance attestations
+        working-directory: smoke
+        run: npm audit signatures
+
+  github-release:
+    name: GitHub release
+    needs: [validate, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download tarball artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-tarball
+          path: out
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PRERELEASE_FLAG=""
+          if printf '%s' "$VERSION" | grep -q -- '-'; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "$TAG" out/*.tgz out/SHA256SUMS \
+            --repo "$REPO" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            $PRERELEASE_FLAG
