@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http';
+import { inspect } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   APIError,
@@ -246,7 +247,9 @@ describe('GeoEngine Client (Table-Driven)', () => {
         flushInterval: 250,
       });
 
-      expect(client.options.apiKey).toBe('api-key-xyz');
+      expect('apiKey' in client.options).toBe(false);
+      expect(JSON.stringify(client)).not.toContain('api-key-xyz');
+      expect(inspect(client)).not.toContain('api-key-xyz');
       expect(client.options.environment).toBe('test');
       expect(client.options.jwtToken).toBe('jwt-token');
       expect(client.options.ingestUrl).toBe('https://mock-base.com');

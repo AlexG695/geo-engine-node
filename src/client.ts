@@ -1,6 +1,7 @@
 import { ClientClosedError, ValidationError } from './errors.js';
 import { GeoIdentityService } from './geoidentity.js';
 import { HttpClient, type HttpClientConfig } from './http.js';
+import { IdentityService } from './identity/evaluate.js';
 import { AsyncIngester } from './ingester.js';
 import type {
   GeoEngineOptions,
@@ -21,6 +22,7 @@ import {
  * Equivalent to Go's Client struct.
  */
 export class GeoEngine {
+  #apiKey: string;
   private readonly http: HttpClient;
   private isClosed = false;
 
@@ -55,6 +57,11 @@ export class GeoEngine {
   readonly GeoIdentity: GeoIdentityService;
 
   /**
+   * Server-only runtime decision client for `POST /v1/evaluate`.
+   */
+  readonly identity: IdentityService;
+
+  /**
    * Initializes a new GeoEngine client instance.
    *
    * @param apiKey Your GeoEngine API Key (required)
@@ -75,6 +82,7 @@ export class GeoEngine {
       throw new ValidationError('GeoEngine: API Key es requerida.');
     }
 
+    this.#apiKey = resolvedOptions.apiKey;
     this.http = new HttpClient(resolvedOptions);
     this.spatial = new SpatialService(this.http);
     this.Spatial = this.spatial;
@@ -83,13 +91,32 @@ export class GeoEngine {
     this.Users = this.users;
     this.geoIdentity = new GeoIdentityService(this.http, isClosed);
     this.GeoIdentity = this.geoIdentity;
+    this.identity = new IdentityService({
+      getBaseUrl: () => this.http.options.apiServiceUrl,
+      getApiKey: () => this.#apiKey,
+      getTimeoutMs: () => this.http.options.identityTimeoutMs,
+      getFetch: () => this.http.options.fetch,
+      isClosed,
+    });
   }
 
   /**
-   * Current configuration options.
+   * Current configuration options (without secret apiKey).
    */
   get options(): Readonly<HttpClientConfig> {
     return this.http.options;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      apiKey: '[REDACTED]',
+      closed: this.isClosed,
+      options: this.http.toJSON(),
+    };
+  }
+
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**

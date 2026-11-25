@@ -15,10 +15,12 @@ import {
   TimeoutError,
   UserAlreadyExistsError,
   UserNotFoundError,
+  ValidationError,
 } from './errors.js';
 import type { GeoEngineOptions } from './models.js';
+import { SDK_VERSION } from './version.js';
 
-export const USER_AGENT = 'GeoEngineNodeSDK/2.1.0';
+export const USER_AGENT = `GeoEngineNodeSDK/${SDK_VERSION}`;
 
 export interface RequestOptions {
   method?: string;
@@ -186,13 +188,13 @@ export function parseApiServiceError(statusCode: number, bodyText: string): APIE
 }
 
 export interface HttpClientConfig {
-  apiKey: string;
   jwtToken?: string;
   environment: string;
   managementUrl: string;
   ingestUrl: string;
   apiServiceUrl: string;
   timeout: number;
+  identityTimeoutMs: number;
   maxRetries: number;
   batchSize: number;
   flushInterval: number;
@@ -200,11 +202,36 @@ export interface HttpClientConfig {
   fetch: (...args: any[]) => Promise<any>;
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * Ensures a configured service URL is safe to send credentials to:
+ * https, or http only for loopback hosts. Throws before any request is made.
+ */
+export function assertSecureServiceUrl(name: string, value: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new ValidationError(`GeoEngine: ${name} no es una URL válida.`);
+  }
+  if (parsed.protocol === 'https:') {
+    return;
+  }
+  if (parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname)) {
+    return;
+  }
+  throw new ValidationError(
+    `GeoEngine: ${name} debe usar https (http solo se permite para localhost, 127.0.0.1 o ::1).`
+  );
+}
+
 /**
  * Robust HTTP client handling authentication headers, HMAC generation,
  * timeouts via AbortController, and exponential backoff retries.
  */
 export class HttpClient {
+  #apiKey: string;
   private readonly config: HttpClientConfig;
 
   constructor(options: GeoEngineOptions = {}) {
@@ -212,14 +239,26 @@ export class HttpClient {
     const defaultIngest = 'https://ingest.geoengine.dev';
     const defaultApiService = 'https://api.geoengine.dev';
 
-    this.config = {
-      apiKey: options.apiKey ?? '',
-      jwtToken: options.jwtToken,
-      environment: options.environment ?? 'live',
+    this.#apiKey = options.apiKey ?? '';
+    const resolvedUrls = {
       managementUrl: options.baseUrl ?? options.managementUrl ?? defaultManagement,
       ingestUrl: options.baseUrl ?? options.ingestUrl ?? defaultIngest,
       apiServiceUrl: options.baseUrl ?? options.apiServiceUrl ?? defaultApiService,
+    };
+    const urlLabels: Record<keyof typeof resolvedUrls, string> = {
+      managementUrl: options.baseUrl !== undefined ? 'baseUrl' : 'managementUrl',
+      ingestUrl: options.baseUrl !== undefined ? 'baseUrl' : 'ingestUrl',
+      apiServiceUrl: options.baseUrl !== undefined ? 'baseUrl' : 'apiServiceUrl',
+    };
+    for (const key of Object.keys(resolvedUrls) as Array<keyof typeof resolvedUrls>) {
+      assertSecureServiceUrl(urlLabels[key], resolvedUrls[key]);
+    }
+    this.config = {
+      jwtToken: options.jwtToken,
+      environment: options.environment ?? 'live',
+      ...resolvedUrls,
       timeout: options.timeout ?? 10000,
+      identityTimeoutMs: options.identityTimeoutMs ?? 500,
       maxRetries: options.maxRetries ?? 2,
       batchSize: options.batchSize ?? 100,
       flushInterval: options.flushInterval ?? 500,
@@ -230,6 +269,27 @@ export class HttpClient {
 
   get options(): Readonly<HttpClientConfig> {
     return this.config;
+  }
+
+  toJSON(): Record<string, unknown> {
+    return {
+      apiKey: '[REDACTED]',
+      ...(this.config.jwtToken ? { jwtToken: '[REDACTED]' } : {}),
+      environment: this.config.environment,
+      managementUrl: this.config.managementUrl,
+      ingestUrl: this.config.ingestUrl,
+      apiServiceUrl: this.config.apiServiceUrl,
+      timeout: this.config.timeout,
+      identityTimeoutMs: this.config.identityTimeoutMs,
+      maxRetries: this.config.maxRetries,
+      batchSize: this.config.batchSize,
+      flushInterval: this.config.flushInterval,
+      bufferSize: this.config.bufferSize,
+    };
+  }
+
+  [Symbol.for('nodejs.util.inspect.custom')](): Record<string, unknown> {
+    return this.toJSON();
   }
 
   /**
@@ -256,10 +316,10 @@ export class HttpClient {
         ...(opts.isApiService
           ? { Accept: 'application/json' }
           : { 'Content-Type': 'application/json' }),
-        'X-API-Key': this.config.apiKey,
+        'X-API-Key': this.#apiKey,
         'X-Geo-Environment': this.config.environment,
         'X-Request-Time': now.toString(),
-        'X-Signature': generateHMACSignature(this.config.apiKey, now),
+        'X-Signature': generateHMACSignature(this.#apiKey, now),
         'User-Agent': USER_AGENT,
       };
 
@@ -277,6 +337,9 @@ export class HttpClient {
           headers,
           body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
           signal: controller.signal,
+          // Never follow redirects: custom headers (X-API-Key, X-Signature) are not
+          // stripped by fetch on cross-origin redirects.
+          redirect: 'manual',
         });
 
         (globalThis as typeof globalThis & {

@@ -3,27 +3,26 @@
 [![NPM Version](https://img.shields.io/npm/v/geo-engine-node?style=flat-square&color=blue)](https://www.npmjs.com/package/geo-engine-node)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-Vitest-green.svg)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/Tests-Vitest%20%2B%20node%3Atest-green.svg)](https://vitest.dev/)
 
 > *Read this in Spanish: [README.es.md](./README.es.md)*
 
-Official idiomatic **Node.js & TypeScript** client for the **Geo-Engine** platform.  
-Designed for **high performance**, strict type-safety, and 1:1 parity with the official Go SDK (`v2.1.0`). Seamlessly integrates into backend microservices, Serverless functions, and modern edge environments.
+Official **Node.js & TypeScript** client for the **Geo-Engine** platform (`v2.1.0`).  
+Designed for strict TypeScript safety, zero runtime dependencies, and server-side integration in Node.js `>=18`.
 
 ---
 
 ## ✨ Features
 
-- 📍 **Real-time Ingestion:** Sub-10ms telemetry coordinate dispatch via HTTP REST.
-- 🗺️ **Advanced Spatial Module:** High-performance Point-in-Polygon spatial evaluation (single and general validation against all geofences).
-- 👥 **Users Module:** Management of organization members, roles, and email invitations.
-- 🛡️ **GeoIdentity Module:** Access rules (IP blacklists, geographic boundaries, Tor/datacenter blocking) assignable to users or to the entire organization.
-- 🏗️ **Fluent Query Builder:** Fluent syntax `client.spatial.check(lat, lng).inGeofence(...)` for maximum readability.
-- 🚧 **Geofence Management:** Dynamic creation and automatic normalization of PostGIS-backed GeoJSON polygons.
-- 🔄 **Background AsyncIngester:** In-memory queue with auto-flush by batch size and time interval for high-throughput fleet and IoT ingestion.
-- 🛡️ **Native Security:** Automatic HMAC-SHA256 signature generation (`X-Signature`), anti-replay timestamps, and JWT Bearer token support.
-- 📦 **Dual Package (ESM & CommonJS):** Compatible with native `import` and `require()`, bundled with `tsup` and full `.d.ts` type definitions.
-- ⚡ **Zero Runtime Dependencies:** Built on standard Node.js APIs (native `fetch`, `node:crypto`, `AbortController`). Compatible with Serverless and Edge runtimes (Cloudflare Workers, Next.js, Bun).
+- 📍 **Telemetry Ingestion:** HTTP REST location dispatch (`sendLocation`) and background `AsyncIngester`.
+- 🗺️ **Spatial Module:** Point-in-polygon evaluation (single geofence and general validation against all active geofences) plus fluent query builder `client.spatial.check(lat, lng)`.
+- 👥 **Users Module:** Management of organization members, roles, and email invitations (`client.users`).
+- 🛡️ **GeoIdentity Rules & Runtime Evaluation:** Rule CRUD (`client.geoIdentity`) and server-only access decision evaluation via `client.identity.evaluate(...)` and `geo-engine-node/identity` (`identityGuard`).
+- 🚧 **Geofence Management:** Creation and automatic normalization of PostGIS-backed GeoJSON polygons (`createGeofence`).
+- 📦 **Dual Package (ESM & CommonJS):** Compatible with native `import` and `require()`, bundled with `tsup` and `.d.ts` / `.d.cts` type definitions.
+- ⚡ **Zero Runtime Dependencies:** Built on standard Node.js APIs (`fetch`, `node:crypto`, `node:timers`, `AbortController`) for Node.js `>=18` server runtimes.
+
+> **Runtime Note:** The SDK imports `node:crypto` and `node:timers` and is intended for **Node.js server runtimes** (edge runtimes without Node compatibility are not supported). The secret `apiKey` is stored in a private `#` field and is omitted from `client.options`, `JSON.stringify`, and `util.inspect`.
 
 ---
 
@@ -51,7 +50,7 @@ bun add geo-engine-node
 import GeoEngine from 'geo-engine-node';
 
 // Initialize with your secret API key
-const client = new GeoEngine('geo_live_123456');
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
 
 try {
   await client.sendLocation('truck-01', 19.4326, -99.1332);
@@ -63,12 +62,12 @@ try {
 }
 ```
 
-### CommonJS (Legacy)
+### CommonJS
 
 ```js
 const GeoEngine = require('geo-engine-node');
 
-const client = new GeoEngine('geo_live_123456');
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
 
 client.sendLocation('scooter-09', 19.4326, -99.1332)
   .then(() => console.log('Location registered'))
@@ -77,16 +76,91 @@ client.sendLocation('scooter-09', 19.4326, -99.1332)
 
 ---
 
+## 🛡️ GeoIdentity Runtime Evaluation (`/v1/evaluate` & `identityGuard`)
+
+> [!IMPORTANT]
+> **Server-only & Secret API Key:** `POST /v1/evaluate` authenticates strictly with `Authorization: Bearer <secret_api_key>` and does **not** allow browser CORS requests. Never expose your API key or import `geo-engine-node/identity` in browser code (loading it when `window` is defined throws immediately).
+
+### Direct Evaluation (`client.identity.evaluate`)
+
+```ts
+import GeoEngine from 'geo-engine-node';
+import { IdentityTransientError, IdentityIntegrationError, isTransient } from 'geo-engine-node/identity';
+
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+
+try {
+  const decision = await client.identity.evaluate({
+    scope: 'login',
+    subject: { user_id: 'user_2abc123', roles: ['admin'], device_id: 'dev_9f8e7d' },
+    context: {
+      ip: '203.0.113.42',
+      location: { lat: 28.6353, lng: -106.0889, accuracy_m: 25, source: 'device' },
+    },
+  });
+
+  if (decision.decision === 'BLOCK') {
+    // Handle block
+  } else if (decision.decision === 'CHALLENGE') {
+    // Prompt step-up verification (e.g. decision.challenge?.hint)
+  }
+} catch (err) {
+  if (isTransient(err)) {
+    // Network, timeout, 5xx, or 429 after 500ms deadline / single retry
+  } else if (err instanceof IdentityIntegrationError) {
+    // 400, 401, edge 403, 404, 422, or malformed response (do NOT fail open)
+  }
+}
+```
+
+### Express / Connect Middleware (`identityGuard`)
+
+```ts
+import GeoEngine from 'geo-engine-node';
+import { identityGuard } from 'geo-engine-node/identity';
+
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
+
+app.post(
+  '/login',
+  identityGuard({
+    client,
+    scope: 'login',
+    failOpen: false, // REQUIRED: true allows on transient error, false blocks (403)
+    getSubject: (req) => ({ user_id: req.body.userId, device_id: req.headers['x-device-id'] as string }),
+    getContext: (req) => ({
+      ip: req.ip,
+      location: req.body.location, // If omitted and scope has geo rules, engine may block with `location_missing`
+    }),
+    onChallenge: async (decision, _req, res) => {
+      res.status(403).json({ error: 'challenge_required', hint: decision.challenge?.hint ?? 'step_up' });
+    },
+    onIntegrationError: (err) => {
+      console.error('GeoIdentity integration error:', err);
+    },
+  }),
+  loginHandler
+);
+```
+
+- **`failOpen` (mandatory, no default):** applies **only** to transient errors (`timeout`, `network`, `server_error`, `rate_limited`) and unknown `decision` values (`unknown_decision`). When triggered, `onDecision` receives a synthetic `FallbackDecision` with `fallback: true`, `fallback_reason`, and `meta.source = 'sdk_fallback'`.
+- **Integration errors never fail open:** `400`, `401`, `403` (including non-JSON edge `403`), `404`, `422`, local invalid inputs, or unexpected payloads throw `IdentityIntegrationError`, invoke `onIntegrationError`, and return HTTP `500` (`{ error: 'internal_error' }`).
+- **`CHALLENGE`:** invokes `onChallenge` if provided; if omitted, responds `403` with `{ error: 'challenge_required', hint: 'step_up' }` and never falls through to `next()`.
+- **`context.location`:** when the scope evaluates geographic conditions and `location` is absent, `/v1/evaluate` returns HTTP `200` with the `location_missing` signal (which may result in `BLOCK` as a normal policy decision, not an error).
+- **Deadline & retries:** `evaluate` enforces a `500 ms` total deadline by default (`identityTimeoutMs` or per-call `timeoutMs`) with at most 1 jittered retry on transient failures (honoring `Retry-After` if it fits in the remaining budget), reusing the same `X-Request-Id`.
+
+---
+
 ## 🗺️ Spatial Module & Point Validation
 
-The `client.spatial` module connects directly to the GeoEngine API service to evaluate spatial containment:
+The `client.spatial` module connects to the GeoEngine API service to evaluate spatial containment:
 
 ### Single Geofence Validation
 
 ```ts
 import GeoEngine, { GeofenceNotFoundError } from 'geo-engine-node';
 
-const client = new GeoEngine('geo_live_123456');
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
 
 try {
   const res = await client.spatial.validatePoint('geofence_123', 19.4326, -99.1332);
@@ -115,7 +189,7 @@ const res = await client.spatial.validateGeneral(19.4326, -99.1332);
 
 if (res.hasMatches()) {
   console.log(`Matched ${res.totalMatches} geofences:`, res.geofenceNames());
-  
+
   if (res.containsGeofence('CDMX Downtown')) {
     console.log('The vehicle is in CDMX Downtown');
   }
@@ -127,16 +201,12 @@ if (res.hasMatches()) {
 
 ### Fluent Query Builder
 
-For maximum readability, you can construct fluent queries:
-
 ```ts
-// Validation in a specific geofence
 const singleRes = await client.spatial
   .check(19.4326, -99.1332)
   .inGeofence('geofence_123')
   .execute();
 
-// Validation against all geofences
 const generalRes = await client.spatial
   .check(19.4326, -99.1332)
   .inAllGeofences()
@@ -152,14 +222,12 @@ The `client.users` module manages the members of the organization that owns the 
 ```ts
 import GeoEngine, { Roles, InvitationPendingError, LastAdminError } from 'geo-engine-node';
 
-const client = new GeoEngine('geo_live_123456');
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
 
-// List members and available roles
 const users = await client.users.list();
 const roles = await client.users.listRoles();
 const user = await client.users.get('user_123');
 
-// Invite a new member (GeoEngine sends the invitation email)
 try {
   const inv = await client.users.invite({
     email: 'ana@acme.com',
@@ -175,7 +243,6 @@ try {
   }
 }
 
-// Update a member's role or revoke their access
 try {
   await client.users.updateRole('user_123', Roles.Dispatcher);
   await client.users.remove('user_123');
@@ -190,9 +257,9 @@ try {
 
 ---
 
-## 🛡️ GeoIdentity Module
+## 🛡️ GeoIdentity Rules Management (`client.geoIdentity`)
 
-The `client.geoIdentity` module creates access rules and assigns them to a user or to the entire organization:
+The `client.geoIdentity` module manages access rules and subject assignments:
 
 ```ts
 import { polygonFromLatLng, RuleActions, SubjectTypes } from 'geo-engine-node';
@@ -210,28 +277,17 @@ const rule = await client.geoIdentity.createRule({
   assignedSubjects: [{ subjectType: SubjectTypes.User, subjectId: 'user_123' }],
 });
 
-// Query, update, and delete
 const rules = await client.geoIdentity.listRules({ isActive: true });
-const detail = await client.geoIdentity.getRule(rule.id); // includes assignedSubjects
-await client.geoIdentity.updateRule(rule.id, { isActive: false, geoLimit: null }); // null removes the geographic boundary
+const detail = await client.geoIdentity.getRule(rule.id);
+await client.geoIdentity.updateRule(rule.id, { isActive: false, geoLimit: null });
 await client.geoIdentity.deleteRule(rule.id);
-
-// Assign or unassign the rule
-await client.geoIdentity.assignToUser(rule.id, 'user_456');
-await client.geoIdentity.assignToOrganization(rule.id);
-await client.geoIdentity.unassignFromUser(rule.id, 'user_456');
-
-// Rules that apply to a user (direct, by role, or organization-wide)
-const userRules = await client.geoIdentity.listUserRules('user_123');
 ```
-
-> A rule created without `assignedSubjects` applies to the entire organization. A rule must always retain at least one subject: removing the last subject throws `LastSubjectError` (deactivate or delete the rule instead).
 
 ---
 
 ## 🚧 Geofence Creation (PostGIS Polygons)
 
-Create spatial zones dynamically. The SDK validates the `[latitude, longitude]` format, automatically converts it to GeoJSON `[longitude, latitude]`, and ensures the polygon is closed:
+Create spatial zones dynamically. The SDK validates `[latitude, longitude]`, converts to GeoJSON `[longitude, latitude]`, and ensures the polygon ring is closed:
 
 ```ts
 const zoneCoordinates: [number, number][] = [
@@ -249,16 +305,14 @@ await client.createGeofence(
 
 ---
 
-## 🔄 High-Throughput Async Batch Ingestion (`AsyncIngester`)
+## 🔄 Async Batch Ingestion (`AsyncIngester`)
 
-For high-volume fleet tracking or IoT telemetry, use the in-memory queue with auto-flush:
+Queue telemetry pings in memory and dispatch them periodically (`sendLocation` per ping):
 
 ```ts
-import GeoEngine, { AsyncIngester } from 'geo-engine-node';
+import GeoEngine from 'geo-engine-node';
 
-const client = new GeoEngine('geo_live_123456');
-
-// Queue: 5000 pings buffer, flush every 100 items or every 500ms
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!);
 const ingester = client.createAsyncIngester(5000, 100, 500);
 
 const ok = ingester.enqueue({
@@ -272,7 +326,6 @@ if (!ok) {
   console.warn('Buffer queue full or ingester stopped');
 }
 
-// On service shutdown, drain all pending items:
 await ingester.stop();
 client.close();
 ```
@@ -281,14 +334,13 @@ client.close();
 
 ## 🔧 Advanced Configuration
 
-You can configure the client using the options object:
-
 ```ts
-const client = new GeoEngine('geo_live_123456', {
-  environment: 'live', // 'live' | 'test'
+const client = new GeoEngine(process.env.GEOENGINE_API_KEY!, {
+  environment: 'live', // 'live' | 'test' (sent as X-Geo-Environment on legacy routes)
   jwtToken: 'my.jwt.token',
-  timeout: 5000, // milliseconds
-  maxRetries: 3, // retries with exponential backoff on 429/5xx
+  timeout: 5000, // legacy routes timeout in ms
+  identityTimeoutMs: 500, // total deadline for client.identity.evaluate in ms
+  maxRetries: 2, // legacy routes retry count
   managementUrl: 'https://management.geoengine.dev',
   ingestUrl: 'https://ingest.geoengine.dev',
   apiServiceUrl: 'https://api.geoengine.dev',
@@ -301,32 +353,34 @@ const client = new GeoEngine('geo_live_123456', {
 
 | Option | Type | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `apiKey` | `string` | Secret authentication key | (required) |
-| `environment` | `string` | Target (`'live'` or `'test'`) for the `X-Geo-Environment` header | `'live'` |
-| `jwtToken` | `string` | Bearer token for authorized operations | `undefined` |
-| `apiServiceUrl` | `string` | URL of the API service (Spatial, Users, and GeoIdentity) | `'https://api.geoengine.dev'` |
+| `apiKey` | `string` | Secret authentication key (stored privately; not exposed on `client.options`) | (required) |
+| `environment` | `string` | Target (`'live'` or `'test'`) sent in `X-Geo-Environment` on legacy routes | `'live'` |
+| `jwtToken` | `string` | Optional Bearer token sent on legacy routes | `undefined` |
+| `apiServiceUrl` | `string` | URL of the API service (Spatial, Users, GeoIdentity, `/v1/evaluate`) | `'https://api.geoengine.dev'` |
 | `ingestUrl` | `string` | URL of the telemetry ingestion service | `'https://ingest.geoengine.dev'` |
 | `managementUrl` | `string` | URL of the control plane and geofence service | `'https://management.geoengine.dev'` |
-| `baseUrl` | `string` | Overrides ingest, management, and apiService endpoints together | `undefined` |
-| `timeout` | `number` | Request timeout in ms (via `AbortController`) | `10000` |
-| `maxRetries` | `number` | Retries with exponential backoff on transient errors | `2` |
+| `baseUrl` | `string` | Overrides ingest, management, and apiService endpoints together. Must be `https` (plain `http` only for `localhost`, `127.0.0.1` or `::1`); otherwise the constructor throws a `ValidationError`. Redirects are never followed. | `undefined` |
+| `timeout` | `number` | Legacy request timeout in ms (via `AbortController`) | `10000` |
+| `identityTimeoutMs` | `number` | Total deadline in ms for `client.identity.evaluate` (including retry) | `500` |
+| `maxRetries` | `number` | Exponential backoff retries (`429`, `5xx`, network) on legacy routes (`GET`-only for `users`/`geoIdentity`) | `2` |
 | `batchSize` | `number` | Batch size for `AsyncIngester` | `100` |
 | `flushInterval` | `number` | Flush interval for `AsyncIngester` in ms | `500` |
 | `bufferSize` | `number` | Maximum queue capacity for `AsyncIngester` | `5000` |
+
+> **Legacy vs `/v1/evaluate` Authentication:** Legacy routes send `X-API-Key`, `X-Geo-Environment`, `X-Request-Time`, and `X-Signature` (HMAC-SHA256 of the timestamp using `apiKey`, plus `Authorization: Bearer` if `jwtToken` is set). `/v1/evaluate` sends **only** `Authorization: Bearer <apiKey>` and `X-Request-Id`.
 
 ---
 
 ## 🛡️ Typed Error Hierarchy
 
-The SDK maps all HTTP status codes and responses into a clean error class hierarchy:
+> `err.code` is the stable contract between formats: the ESM and CJS builds each ship their own error classes (so `instanceof` does not work across formats), but `code` values are identical.
+
+Legacy and Spatial routes map HTTP status codes as follows:
 
 ```ts
 import {
   GeoEngineError,
   ValidationError,
-  InvalidLatitudeError,
-  InvalidLongitudeError,
-  DeviceIDRequiredError,
   GeofenceNotFoundError,
   QuotaExceededError,
   AuthenticationError,
@@ -341,47 +395,33 @@ try {
   if (error instanceof GeofenceNotFoundError) {
     // 204 No Content or 404 Not Found
   } else if (error instanceof QuotaExceededError) {
-    // 402 Payment Required or 429
+    // 402 Payment Required or reason QUOTA_EXCEEDED
   } else if (error instanceof AuthenticationError) {
-    // 401 Unauthorized or MISSING_API_KEY
+    // 401 Unauthorized, MISSING_API_KEY, or MISSING_ORGANIZATION
+  } else if (error instanceof ForbiddenError) {
+    // 403 Forbidden
   } else if (error instanceof TimeoutError) {
     // Request timed out
   } else if (error instanceof ValidationError) {
-    // Coordinate out of range [-90,90] or invalid parameter
+    // Local validation failure (e.g. out-of-range coordinates or missing ID)
   }
 }
 ```
 
-The Users and GeoIdentity modules throw `APIServiceError` (with `statusCode`, `code`, and `apiMessage`) or one of its subclasses:
+Users and GeoIdentity rule CRUD endpoints throw `APIServiceError` subclasses (`UserNotFoundError`, `RuleNotFoundError`, `UserAlreadyExistsError`, `InvitationPendingError`, `LastAdminError`, `LastSubjectError`) and only retry `GET` requests.
 
-| Error | API Code | When it occurs |
-| :--- | :--- | :--- |
-| `UserNotFoundError` | `USER_NOT_FOUND`, `USER_REVOKED` | User does not exist in the organization |
-| `RuleNotFoundError` | `RULE_NOT_FOUND` | GeoIdentity rule does not exist |
-| `UserAlreadyExistsError` | `USER_ALREADY_EXISTS` | Invited email already belongs to the organization |
-| `InvitationPendingError` | `INVITATION_PENDING` | There is already a pending invitation for this email |
-| `LastAdminError` | `LAST_ADMIN` | Operation would leave the organization without administrators |
-| `LastSubjectError` | `LAST_SUBJECT` | Operation would leave the rule without assigned subjects |
-
-Errors 401, 403, and 402 reuse `AuthenticationError`, `ForbiddenError`, and `QuotaExceededError`. Local validations throw `UserIDRequiredError`, `RuleIDRequiredError`, `RuleNameRequiredError`, `EmailRequiredError`, or `RoleRequiredError` without calling the API.
-
-> In Users and GeoIdentity, only read requests (`GET`) are automatically retried on 429/5xx; write operations are never retried to prevent duplicate invitations or assignments.
+GeoIdentity `/v1/evaluate` throws `IdentityTransientError` (network, timeout, `5xx`, `429`) or `IdentityIntegrationError` (`400`, `401`, `403` including edge `403`, `404`, `422`, invalid payload/config), exporting `isTransient(err)`.
 
 ---
 
 ## 🧪 Testing and Building
 
-Run the unit and integration test suite with Vitest:
+All tests run locally against simulated `node:http` servers (no live network required):
 
 ```bash
-npm run test
-```
-
-To compile CJS and ESM outputs with TypeScript type definitions:
-
-```bash
-npm run build
 npm run typecheck
+npm run build
+npm test
 ```
 
 ---

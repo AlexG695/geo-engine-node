@@ -38,16 +38,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build
-        run: npm run build
-
-      - name: Test
+      - name: Unit tests, build, identity and format tests
         run: npm test
 
       - name: Verify entry points import (ESM and CJS)
         run: |
-          node --input-type=module -e "const m = await import('geo-engine-node'); if (typeof m.GeoEngine !== 'function') throw new Error('ESM: GeoEngine export missing'); console.log('ESM ok:', Object.keys(m).length, 'exports')"
-          node -e "const m = require('geo-engine-node'); if (typeof m.GeoEngine !== 'function') throw new Error('CJS: GeoEngine export missing'); console.log('CJS ok:', Object.keys(m).length, 'exports')"
+          node --input-type=module -e "const m = await import('geo-engine-node'); if (typeof m.GeoEngine !== 'function') throw new Error('ESM root: GeoEngine export missing'); console.log('ESM root ok:', Object.keys(m).length, 'exports')"
+          node -e "const m = require('geo-engine-node'); if (typeof m.GeoEngine !== 'function') throw new Error('CJS root: GeoEngine export missing'); console.log('CJS root ok:', Object.keys(m).length, 'exports')"
+          node --input-type=module -e "const m = await import('geo-engine-node/identity'); if (typeof m.identityGuard !== 'function') throw new Error('ESM identity: identityGuard export missing'); console.log('ESM identity ok:', Object.keys(m).length, 'exports')"
+          node -e "const m = require('geo-engine-node/identity'); if (typeof m.identityGuard !== 'function') throw new Error('CJS identity: identityGuard export missing'); console.log('CJS identity ok:', Object.keys(m).length, 'exports')"
 
       - name: List package contents (dry run, nothing is published)
         run: npm pack --dry-run --ignore-scripts

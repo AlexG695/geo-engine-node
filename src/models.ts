@@ -47,6 +47,12 @@ export interface GeoEngineOptions {
   timeout?: number;
 
   /**
+   * Total deadline in milliseconds for GeoIdentity `/v1/evaluate` calls (including retry).
+   * Default: 500ms.
+   */
+  identityTimeoutMs?: number;
+
+  /**
    * Maximum number of automatic retries on network failures or 429/5xx status codes.
    * Default: 2.
    */
