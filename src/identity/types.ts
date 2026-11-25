@@ -6,7 +6,7 @@ export type LocationSource = 'device' | 'ip' | 'wifi' | 'cell' | 'manual' | (str
 /**
  * Geographic location signal sent in the evaluation context.
  */
-export interface Location {
+export interface IdentityLocation {
   lat: number;
   lng: number;
   accuracy_m?: number;
@@ -17,16 +17,16 @@ export interface Location {
 /**
  * Request context signals evaluated against the scope rules.
  */
-export interface Context {
+export interface IdentityContext {
   ip?: string;
-  location?: Location;
+  location?: IdentityLocation;
 }
 
 /**
  * Subject attempting access. All identifiers are opaque client-defined strings.
  * At least one of `user_id` or `device_id` is required.
  */
-export type Subject =
+export type IdentitySubject =
   | {
       user_id: string;
       device_id?: string;
@@ -43,8 +43,8 @@ export type Subject =
  */
 export interface EvaluateRequest {
   scope: string;
-  subject: Subject;
-  context?: Context;
+  subject: IdentitySubject;
+  context?: IdentityContext;
 }
 
 /**
@@ -205,13 +205,13 @@ export interface IdentityGuardOptions<
 > {
   client: IdentityGuardClient;
   scope: string;
-  getSubject: (req: Req) => Subject | Promise<Subject>;
+  getSubject: (req: Req) => IdentitySubject | Promise<IdentitySubject>;
   /**
    * Provides request context (`ip`, `location`). If the scope has geographic rules and
    * `location` is omitted, the engine returns HTTP 200 with signal `location_missing`
    * (which may result in BLOCK depending on the rule).
    */
-  getContext?: (req: Req) => Context | undefined | Promise<Context | undefined>;
+  getContext?: (req: Req) => IdentityContext | undefined | Promise<IdentityContext | undefined>;
   /**
    * Mandatory local fallback policy on transient errors or unknown decisions.
    * `true` allows access on transient failure; `false` blocks (HTTP 403).

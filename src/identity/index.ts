@@ -12,9 +12,9 @@ export {
 } from './errors.js';
 export type {
   LocationSource,
-  Location,
-  Context,
-  Subject,
+  IdentityLocation,
+  IdentityContext,
+  IdentitySubject,
   EvaluateRequest,
   EvaluateOptions,
   KnownDecision,

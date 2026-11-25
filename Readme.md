@@ -8,7 +8,7 @@
 > *Read this in Spanish: [README.es.md](./README.es.md)*
 
 Official **Node.js & TypeScript** client for the **Geo-Engine** platform (`v2.1.0`).  
-Designed for strict TypeScript safety, zero runtime dependencies, and server-side integration in Node.js `>=18`.
+Designed for strict TypeScript safety, zero runtime dependencies, and server-side integration in Node.js `>=20`.
 
 ---
 
@@ -20,7 +20,7 @@ Designed for strict TypeScript safety, zero runtime dependencies, and server-sid
 - 🛡️ **GeoIdentity Rules & Runtime Evaluation:** Rule CRUD (`client.geoIdentity`) and server-only access decision evaluation via `client.identity.evaluate(...)` and `geo-engine-node/identity` (`identityGuard`).
 - 🚧 **Geofence Management:** Creation and automatic normalization of PostGIS-backed GeoJSON polygons (`createGeofence`).
 - 📦 **Dual Package (ESM & CommonJS):** Compatible with native `import` and `require()`, bundled with `tsup` and `.d.ts` / `.d.cts` type definitions.
-- ⚡ **Zero Runtime Dependencies:** Built on standard Node.js APIs (`fetch`, `node:crypto`, `node:timers`, `AbortController`) for Node.js `>=18` server runtimes.
+- ⚡ **Zero Runtime Dependencies:** Built on standard Node.js APIs (`fetch`, `node:crypto`, `node:timers`, `AbortController`) for Node.js `>=20` server runtimes.
 
 > **Runtime Note:** The SDK imports `node:crypto` and `node:timers` and is intended for **Node.js server runtimes** (edge runtimes without Node compatibility are not supported). The secret `apiKey` is stored in a private `#` field and is omitted from `client.options`, `JSON.stringify`, and `util.inspect`.
 

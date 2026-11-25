@@ -267,6 +267,21 @@ export class HttpClient {
     };
   }
 
+  /** Removes the API key and JWT from text that may be echoed into error messages. */
+  #redact(text: string): string {
+    let out = text;
+    for (const secret of [this.#apiKey, this.config.jwtToken]) {
+      if (secret && secret.trim() !== '') {
+        out = out.split(secret).join('[REDACTED]');
+        const trimmed = secret.trim();
+        if (trimmed !== secret) {
+          out = out.split(trimmed).join('[REDACTED]');
+        }
+      }
+    }
+    return out;
+  }
+
   get options(): Readonly<HttpClientConfig> {
     return this.config;
   }
@@ -365,7 +380,7 @@ export class HttpClient {
           continue;
         }
 
-        const responseText = await response.text();
+        const responseText = this.#redact(await response.text());
 
         if (!response.ok) {
           throw opts.isApiService
